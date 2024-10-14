@@ -1,0 +1,168 @@
+import flet as ft
+import sqlite3
+
+
+def main(page: ft.Page):
+    tasks = []  # List to store tuples of (id, task_text)
+    dragged_task = None
+
+    # Database setup
+    conn = sqlite3.connect('tasks.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task TEXT NOT NULL
+        )
+    ''')
+    conn.commit()
+
+    def load_tasks():
+        """Load tasks from the database."""
+        cursor.execute("SELECT id, task FROM tasks")
+        return cursor.fetchall()  # Returns list of tuples (id, task_text)
+
+    def save_task_to_db(task):
+        """Save a new task to the database and return its ID."""
+        cursor.execute("INSERT INTO tasks (task) VALUES (?)", (task,))
+        conn.commit()
+        return cursor.lastrowid  # Return the ID of the newly added task
+
+    def delete_task_from_db(task_id):
+        """Delete a task from the database by its ID."""
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+
+    def update_task_in_db(task_id, new_task):
+        """Update a task's text in the database by its ID."""
+        cursor.execute("UPDATE tasks SET task = ? WHERE id = ?", (new_task, task_id))
+        conn.commit()
+
+    def build_task_list():
+        """Build the list of task UI elements."""
+        return [
+            ft.DragTarget(
+                group="tasks",
+                content=ft.Draggable(
+                    group="tasks",
+                    content=ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Text(task[1], expand=True, color=ft.colors.BLACK),
+                                ft.IconButton(
+                                    icon=ft.icons.EDIT,
+                                    on_click=lambda e, idx=i: edit_task(idx)
+                                ),
+                                ft.IconButton(
+                                    icon=ft.icons.DELETE,
+                                    on_click=lambda e, idx=i: delete_task(idx)
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.END,  # Align icons to the right
+                        ),
+                        padding=ft.padding.all(10),
+                        bgcolor=ft.colors.GREY_300,
+                        border_radius=5,
+                        margin=ft.margin.symmetric(vertical=5),
+                        expand=True
+                    ),
+                    data=i,
+                    on_drag_start=lambda e, t=task: start_drag(e, t)
+                ),
+                on_accept=lambda e, idx=i: reorder_task(idx),
+                data=i,
+            )
+            for i, task in enumerate(tasks)
+        ]
+
+    def start_drag(e, task):
+        """Handle the start of a drag operation."""
+        nonlocal dragged_task
+        dragged_task = task
+
+    def reorder_task(new_index):
+        """Reorder tasks in the list."""
+        nonlocal dragged_task
+        old_index = tasks.index(dragged_task)
+        tasks.insert(new_index, tasks.pop(old_index))
+        task_list.controls = build_task_list()
+        page.update()
+
+    def add_task(e):
+        """Add a new task."""
+        task_text = task_input.value.strip()
+        if task_text:
+            task_id = save_task_to_db(task_text)  # Save to DB and get ID
+            tasks.append((task_id, task_text))  # Add to tasks list
+            task_input.value = ""
+            task_list.controls = build_task_list()
+            page.update()
+
+    def delete_task(index):
+        """Delete a task."""
+        task_id, _ = tasks.pop(index)
+        delete_task_from_db(task_id)  # Delete from DB using ID
+        task_list.controls = build_task_list()
+        page.update()
+
+    def edit_task(index):
+        """Edit a task."""
+        task_id, current_text = tasks[index]
+
+        def save_edit(e):
+            new_text = edit_input.value.strip()
+            if new_text:
+                tasks[index] = (task_id, new_text)  # Update in tasks list
+                update_task_in_db(task_id, new_text)  # Update in DB
+                page.dialog.open = False
+                task_list.controls = build_task_list()
+                page.update()
+
+        edit_input = ft.TextField(label="Edit Task", value=current_text, autofocus=True)
+        save_button = ft.ElevatedButton("Save", on_click=save_edit)
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Edit Task"),
+            content=ft.Column([edit_input, save_button]),
+            actions=[],  # No default actions
+        )
+
+        page.dialog = dialog
+        page.dialog.open = True
+        page.update()
+
+    # Initialize UI components
+    task_input = ft.TextField(label="New Task", autofocus=True, on_submit=add_task)
+    add_button = ft.ElevatedButton("Add Task", on_click=add_task)
+    # Removed save_button as individual operations already save to DB
+
+    # Load tasks from the database when the app starts
+    tasks = load_tasks()
+
+    task_list = ft.ListView(
+        controls=build_task_list(),
+        expand=True,
+        spacing=10,  # Add some spacing between items
+    )
+
+    page.add(
+        ft.Column(
+            [
+                task_input,
+                add_button,
+                task_list,  # Use ListView to make the task list scrollable
+                # save_button removed; if needed, can be added with specific functionality
+            ],
+            alignment=ft.MainAxisAlignment.START,
+            expand=True,
+        )
+    )
+
+    # Optional: Handle app closure to close DB connection
+    def on_close(e):
+        conn.close()
+
+    page.on_close = on_close
+
+
+ft.app(target=main)
